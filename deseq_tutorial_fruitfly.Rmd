@@ -1,0 +1,150 @@
+---
+output:
+  html_document:
+    highlight: kate
+    number_sections: no
+    theme: readable
+  pdf_document: default
+---
+
+# Differetial Expression with DESeq2
+## Drosophila melanogaster
+
+### 1. Setup 
+
+First, install [DESeq2](http://bioconductor.org/packages/release/bioc/html/DESeq2.html):
+
+```{r eval=FALSE}
+source('http://bioconductor.org/biocLite.R')
+biocLite('DESeq2')
+```
+
+Then load the libraries we'll need into your R session:
+
+```{r message=FALSE}
+library('DESeq2')
+library('RColorBrewer')
+```
+
+The input files used here can be obtained from /n/ngsdata/workshops/2015_March/fruitfly or
+[here](https://software.rc.fas.harvard.edu/ngsdata/2015_March/fruitfly).
+
+Finally, set project.dir to the location of your data files:
+
+```{r}
+project.dir <- '~/a/workshops/2015.March/deseq2/fruitfly'
+```
+
+---
+
+### 2. Read gene counts into a *data frame*
+
+Read sample gene counts from tab-delimited files into a [data frame](https://stat.ethz.ch/R-manual/R-devel/library/base/html/data.frame.html). The rows of the *data frame* are genes while the columns are samples. 
+
+```{r}
+sampleNames <- c('dmel_unf1', 'dmel_unf2', 'dmel_unf3', 'dmel_inf1', 'dmel_inf2', 'dmel_inf3')
+
+fileNames <- unlist( lapply(X = sampleNames, FUN = function(a) paste0(a, '.genes.results')) )
+filePaths <- unlist( lapply(X = fileNames, FUN = function(a) file.path(project.dir, a)) )
+
+nsamp = length(sampleNames)
+
+for (i in 1:nsamp) {
+    name <- sampleNames[i]
+    file <- filePaths[i]
+    temp = read.table(file = file, header = TRUE, sep = '\t', row.names = 1)
+    if (i == 1) {
+        countData = matrix(ncol = nsamp, nrow = nrow(temp), dimnames = list(row.names(temp), rep(NA, nsamp)))
+    }
+    curNames <- colnames(countData)
+    countData[,i] <- as.integer(temp[,'expected_count'])
+    curNames[i] <- name
+    colnames(countData) <- curNames
+}
+rm(temp)
+
+countData <- as.data.frame(countData)
+dim(countData)
+```
+
+Create a second *data frame* for sample information, such as the experimental condition that each sample belongs to:
+
+```{r}
+condition <- c('Control', 'Control', 'Control', 'Infected', 'Infected', 'Infected')
+
+colData <- data.frame(row.names=colnames(countData), condition=factor(condition, levels=c('Control','Infected')))
+
+colData
+```
+
+---
+
+### 3. Run DESeq 
+
+First, create a DESeqDataSet by specifying the gene counts *data frame*, the sample inforamtion data frame and a design model:
+
+```{r}
+dataset <- DESeqDataSetFromMatrix(countData = countData,
+                                  colData = colData,
+                                  design = ~condition)
+dataset
+```
+
+Then run the DESeq algorithm and extract results for our two-class comparison:
+
+```{r}
+dds <- DESeq(dataset)
+result <- results(dds, contrast=c('condition','Infected','Control'))
+result <- result[complete.cases(result),]  #remove any rows with NA
+head(result)
+```
+
+---
+
+### 4. View results
+
+A summary of DESeq results:
+```{r}
+summary(result)
+```
+
+The top 50 up-reguldated and down-regulated genes by p-value:
+```{r}
+n = 50
+resOrdered <- result[order(result$padj),]
+topResults <- rbind( resOrdered[ resOrdered[,'log2FoldChange'] > 0, ][1:n,], 
+                    resOrdered[ resOrdered[,'log2FoldChange'] < 0, ][n:1,] )
+topResults[c(1:5,(2*n-4):(2*n)), c('baseMean','log2FoldChange','padj')]
+```
+
+Plot log fold change vs. mean expression for all genes, with genes where p < 0.1 colored red:
+
+```{r}
+plotMA(result, main='DESeq2: D. melanogaster Control vs. Infected', ylim=c(-2,2))
+```
+PCA plot for all genes:
+```{r}
+rld <- rlogTransformation(dds, blind=TRUE)
+plotPCA(rld)
+```
+
+Plot counts for a single gene. Below is the plot for the gene with the lowest p-value:
+```{r}
+plotCounts(dds, gene=which.min(result$padj), intgroup='condition', pch = 19)
+```
+
+Display top genes' normalized counts in a heatmap:
+```{r}
+hmcol <- brewer.pal(11,'RdBu')
+nCounts <- counts(dds, normalized=TRUE)
+heatmap(as.matrix(nCounts[ row.names(topResults), ]), Rowv = NA, col = hmcol, mar = c(8,2))
+```
+
+### 5. Write results to file
+
+```{r}
+write.table(result, file = file.path(project.dir,'Control_vs_Infected.tsv'), quote = FALSE, sep = '\t')
+```
+
+
+

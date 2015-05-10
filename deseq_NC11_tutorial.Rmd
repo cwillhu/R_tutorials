@@ -1,0 +1,124 @@
+---
+output:
+  html_document:
+    highlight: kate
+    number_sections: no
+    theme: readable
+  pdf_document: default
+---
+
+# Differential Expression with DESeq2
+## Mouse immune cells
+## Control vs. treatment samples
+
+### 1. Setup
+
+First, install [DESeq2](http://bioconductor.org/packages/release/bioc/html/DESeq2.html):
+
+```{r eval=FALSE}
+source('http://bioconductor.org/biocLite.R')
+biocLite('DESeq2')
+```
+
+Then load the libraries we'll need into R:
+
+```{r message=FALSE}
+library('DESeq2')
+library('RColorBrewer')
+```
+
+---
+
+### 2. Read gene counts into a *data frame*
+
+Read sample gene counts from a tab-delimited file into a data frame. The rows of the data frame are genes while the columns are samples.
+
+```{r}
+countFilePath = 'http://software.rc.fas.harvard.edu/ngsdata/workshops/2015_March/NC11.gene.txt'
+countData = read.table(file = countFilePath, header = TRUE, sep = '\t', row.names = 1)
+countData = countData[3:ncol(countData)]  #discard chr and strand columns
+dim(countData)
+```
+
+Read in a second data frame that contains the experimental condition that each sample belongs to:
+
+```{r}
+colFilePath = 'http://software.rc.fas.harvard.edu/ngsdata/workshops/2015_March/colData_2conditions.txt'
+colData = read.table(file = colFilePath, header = TRUE, sep = '\t', row.names = 1)
+colData[['condition']] =  factor(colData[['condition']], levels = c('Control', 'Treatment'))       
+colData
+```
+
+---
+
+### 3. Run DESeq2
+
+First, create a DESeqDataSet by specifying the gene counts data frame, the sample information data frame and a design model:
+
+```{r}
+dataset <- DESeqDataSetFromMatrix(countData = countData,
+                                  colData = colData,
+                                  design = ~condition)
+dataset
+```
+
+Then run the DESeq2 algorithm and extract results for our two-class comparison:
+
+```{r}
+dds <- DESeq(dataset)
+result <- results(dds, contrast=c('condition','Treatment','Control'))
+result <- result[complete.cases(result),]  #remove any rows with NA
+head(result)
+```
+
+---
+
+### 4. View results
+
+A summary of DESeq2 results:
+```{r}
+summary(result)
+```
+
+The top 50 up-regulated and down-regulated genes by p-value:
+```{r}
+n = 50
+resOrdered <- result[order(result$padj),]
+topResults <- rbind( resOrdered[ resOrdered[,'log2FoldChange'] > 0, ][1:n,],
+                    resOrdered[ resOrdered[,'log2FoldChange'] < 0, ][n:1,] )
+topResults[c(1:5,(2*n-4):(2*n)), c('baseMean','log2FoldChange','padj')]
+```
+
+Plot log fold change vs. mean expression for all genes, with genes where p < 0.1 colored red:
+
+```{r}
+plotMA(result, main=paste0('Condition: Control vs. Treatment'), ylim=c(-5,5))
+```
+
+PCA plot for all genes:
+```{r}
+rld <- rlogTransformation(dds, blind=TRUE)
+plotPCA(rld, intgroup = 'condition')
+```
+Plot counts for a single gene. Below is the plot for the gene with the lowest p-value:
+```{r}
+plotCounts(dds, gene=which.min(result$padj), intgroup='condition', pch = 19)
+```
+
+Display top genes' normalized counts in a heatmap:
+```{r}
+hmcol <- brewer.pal(11,'RdBu')
+nCounts <- counts(dds, normalized=TRUE)
+heatmap(as.matrix(nCounts[ row.names(topResults), ]), Rowv = NA, col = hmcol, mar = c(8,2))
+```
+
+### 5. Write results to file
+
+```{r}
+project.dir <- '~/My_R_Example' 
+dir.create(project.dir, showWarnings=FALSE)
+write.table(result, file = file.path(project.dir,paste0('NC11_Control_vs_Treatment.tsv')), quote = FALSE, sep = '\t')
+```
+
+
+
